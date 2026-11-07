@@ -1,0 +1,25 @@
+# 本地运行产物
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# 图纸与数据（体积大、含客户信息，不进仓库）
+*.dxf
+*.dwg
+*.xlsx
+*.xls
+SKU/
+
+# 运行输出
+*.png
+!docs/*.png
+fix_report.csv
+audit.json
+blocks.json
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
