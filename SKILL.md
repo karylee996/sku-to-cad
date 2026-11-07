@@ -72,6 +72,23 @@ whenToUse: The user has a furniture library DXF with orange "待校对" placehol
 
 **尺寸优先级**：表格 D 列 > SKU 图引线（OCR）> 现有图块包围盒（无资料就保留，不臆造）。
 
+### OCR 兜底（表格没有规格时）
+
+`fix --ocr auto`（默认）只在「表格无规格」或「占位块是 ERP 默认方块（800/900/1000/1200 正方形）」时才读图，
+避免无谓的 OCR 开销。引擎用 Windows 自带的 `Windows.Media.Ocr`（`pip install winsdk`，无需 Tesseract），
+**英文 + 中文双引擎各跑一遍再合并**：数字（`1.7m`）英文更准，中文关键词（`圆`/`高`/`长`）只有中文引擎给得出。
+
+判定分级——只有高置信度的会自动改写尺寸：
+
+| 判定 | 含义 | 是否自动套用 |
+|---|---|---|
+| `ocr-dia` / `ocr-round` | 图上标了 ⌀，或文字含「圆」 | ✅ |
+| `ocr-default-square` | 占位块是默认方块 → 取图上最大两个 | ✅（两值接近时打 ⚠ 提示复核） |
+| `ocr-two-values` | 图上只有两个平面尺寸 | ✅ |
+| `ocr-confirm` | 与现有尺寸一致 | 不改（仅确认） |
+| `ocr-partial` | 一维对上、另一维只是「最接近的候选」 | ❌ 只给建议 |
+| `ocr-ambiguous` | 多个尺寸无法判断 | ❌ 进人工队列 |
+
 ---
 
 ## 4. 工作流
@@ -100,10 +117,14 @@ python scripts/sku_to_cad.py index 家具库.dxf --out blocks.json
 ```bash
 python scripts/sku_to_cad.py fix 家具库.dxf \
     --table 家具表格.xlsx --sku-dir SKU/ \
+    --ocr auto --ocr-cache ocr_cache.json \
     --report fix_report.csv
 ```
 
-默认**不写文件**。检查 `fix_report.csv` 三列关键信息：`size_status`（ok / ok-rot / fixed / mismatch-keep / no-spec）、`table`（Y/N）、`photo`（Y/N）。
+默认**不写文件**。检查 `fix_report.csv`：`size_status`（ok / ok-rot / ok-template / fixed / mismatch-keep / no-spec）、
+`size_src`（table / ocr / template / keep）、`ocr_status`、`ocr_note`、`table`(Y/N)、`photo`(Y/N)。
+
+先用 `--max-items 20` 抽 20 个看判定是否符合预期，再全量跑。
 
 ### 阶段 3 · 写回
 
@@ -138,6 +159,10 @@ python scripts/dxf_render.py 家具库.dxf --region 0,30000,-12000,2000 --out re
 | 默认方块 | 大量 SKU 都是 `1000×1000` | 是 ERP 缺尺寸的默认值；查 SKU 图引线，查不到就标记待补，别猜 |
 | WPS 单元格图片 | `=DISPIMG("ID_xxx",1)` 读不到图 | 图在 `xl/media/`，`xl/cellimages.xml` + rels 里有 ID→文件映射 |
 | 备注文字层 | 每条占位块下有一行「待校对 1480 × 1040 mm」和整层标题 | 校对完成后**整层清除**，否则图里留一堆"待校对" |
+| OCR 全角/空格 | 「1 ． 7 m」「1 · 8 m」「1 7 4 c m」 | 归一化：全角→半角、中点/逗号当小数点、反复合并数字间空格 |
+| OCR 高度误判 | 椅子 95cm 总高被当成平面 950 | 竖排文字框（h>w×1.25）或含「高」字的行标记为高度；两值接近时打 ⚠ |
+| 椅模板被当成尺寸错误 | 表格 460×410，块却是 536×581 → 一堆假报警 | 块尺寸 ≈ 模板尺寸时判 `ok-template`，不与表格比 |
+| 每次 ERP 重新导入会覆盖库 | 修好的块又变回橙色 | 工具是幂等的，导入后重跑一次即可；建议把命令挂到导入流程后面 |
 
 ---
 
@@ -172,12 +197,17 @@ python scripts/sku_to_cad.py audit <dxf> [--json audit.json]
 python scripts/sku_to_cad.py index <dxf> [--out blocks.json]
 
 # 预演 / 写回
-python scripts/sku_to_cad.py fix <dxf> --table <xlsx> [--sku-dir SKU/] [--report r.csv] [--max-items 20]
+python scripts/sku_to_cad.py fix <dxf> --table <xlsx> [--sku-dir SKU/] [--ocr auto|all|off] \
+        [--ocr-cache ocr.json] [--report r.csv] [--max-items 20]
 python scripts/sku_to_cad.py fix <dxf> --table <xlsx> --apply
+
+# 单独看 OCR 读到了什么（调试/建立信任）
+python scripts/ocr_dims.py --sku-dir SKU/ --skus TZ2614,TZ3818 --cur "TZ2614=1000x1000"
+python scripts/ocr_dims.py --sku-dir SKU/ --all --json ocr_dump.json --cache ocr_cache.json
 
 # 渲染核对
 python scripts/dxf_render.py <dxf> --region x0,x1,y0,y1 --out view.png [--px 2000]
 python scripts/dxf_render.py <dxf> --blocks BF1141,CY0276,CU0102 --out cards.png
 ```
 
-依赖：`pip install ezdxf openpyxl pillow`
+依赖：`pip install ezdxf openpyxl pillow`（OCR 额外需要 `pip install winsdk`，仅 Windows）

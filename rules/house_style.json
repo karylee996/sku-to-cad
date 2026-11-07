@@ -41,6 +41,16 @@
 
   "brand_placeholders": ["待核对", "待校对", "待定"],
 
+  "ocr": {
+    "enabled": true,
+    "dual_engine": true,
+    "engines": ["en-US", "zh-Hans-CN"],
+    "sanity_mm": [80, 8000],
+    "tolerance": 0.15,
+    "default_square": [800, 900, 1000, 1200],
+    "note": "默认方块=ERP 没给尺寸时的正方形占位值；命中时允许用图上最大两个尺寸覆盖。"
+  },
+
   "category_codes": {
     "BF": "sofa",
     "PF": "sofa",

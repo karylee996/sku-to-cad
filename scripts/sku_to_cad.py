@@ -498,9 +498,27 @@ def cmd_fix(args):
     photos = defaultdict(list)
     if args.table:
         table_idx = index_table(read_table(args.table, args.sheet))
+    if args.sku_dir:
         photos = index_photos(args.sku_dir)
-    else:
+    if not args.table:
         print("提示：未提供 --table，将只做格式规范化，不改尺寸/品牌")
+
+    # OCR 兜底（表格没规格时从 SKU 图读尺寸）
+    ocr_mode = getattr(args, "ocr", "auto") or "off"
+    sku_dir = args.sku_dir
+    ocr_dims = None
+    ocr_cache = {}
+    if ocr_mode != "off" and sku_dir:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import ocr_dims  # noqa: F811
+            cache_path = getattr(args, "ocr_cache", None)
+            if cache_path and os.path.exists(cache_path):
+                ocr_cache = json.load(open(cache_path, encoding="utf-8"))
+            print(f"OCR 兜底: 开启（{ocr_mode}），缓存 {len(ocr_cache)} 条")
+        except Exception as e:
+            print(f"OCR 不可用（{e}），跳过")
+            ocr_mode, ocr_dims = "off", None
 
     pending = [i for i in msp.query("INSERT") if i.dxf.layer == L["pending"]]
     if args.max_items:
@@ -538,23 +556,58 @@ def cmd_fix(args):
         cx, cy = (bb.extmin.x + bb.extmax.x) / 2, (bb.extmin.y + bb.extmax.y) / 2
         placeholder = is_placeholder(ents, rules)
 
-        # ---- 尺寸：表格为准；占位块才改 ----
+        # ---- 已经套用共用椅模板的块：不再拿表格尺寸去"挑错" ----
+        on_template = bool(tpl_key) and (
+            (abs(w - tpl_key[0]) <= 2 and abs(h - tpl_key[1]) <= 2) or
+            (abs(w - tpl_key[1]) <= 2 and abs(h - tpl_key[0]) <= 2))
+
+        # ---- 尺寸：表格 > SKU 图 OCR > 现有包围盒 ----
         tw, th = w, h
         tol = rules["thresholds"]["size_tolerance_mm"]
         spec = rec.get("size")
         status_size = "no-spec"
-        if spec and len(spec) >= 2:
+        size_src = "keep"
+        ocr_status, ocr_note = "", ""
+        if on_template:
+            status_size, size_src = "ok-template", "template"
+            tw, th = w, h
+        elif spec and len(spec) >= 2:
             Lw, Ww = spec[0], spec[1]
             if abs(Lw - w) <= tol and abs(Ww - h) <= tol:
                 status_size = "ok"
+                size_src = "table"
             elif abs(Lw - h) <= tol and abs(Ww - w) <= tol:
-                tw, th, status_size = Lw, Ww, "ok-rot"
+                tw, th, status_size, size_src = Lw, Ww, "ok-rot", "table"
             elif placeholder and max(Lw, Ww) >= 300:
-                tw, th, status_size = Lw, Ww, "fixed"
+                tw, th, status_size, size_src = Lw, Ww, "fixed", "table"
                 issues.append((name, f"尺寸 {round(w)}×{round(h)} → {round(Lw)}×{round(Ww)}（表格）"))
             else:
                 status_size = "mismatch-keep"
+                size_src = "keep"
                 issues.append((name, f"尺寸不一致，保留原值 {round(w)}×{round(h)}（表格 {round(Lw)}×{round(Ww)}）"))
+
+        # ---- OCR 兜底：表格没有规格、或占位块是 ERP 默认方块时，从 SKU 图读尺寸 ----
+        need_ocr = (ocr_mode == "all") or (ocr_mode == "auto" and size_src == "keep" and placeholder)
+        if need_ocr and sku_dir and ocr_dims is not None:
+            ow = oh = None
+            try:
+                parsed, _lines, _photo, _text = ocr_dims.read_dims(sku_dir, name, ocr_cache)
+                if parsed:
+                    ow, oh, ocr_status, ocr_note = ocr_dims.decide(parsed, w, h, text=_text)
+                else:
+                    ocr_status, ocr_note = "ocr-empty", "图上没读到尺寸"
+            except SystemExit as e:
+                ocr_status, ocr_note = "ocr-unavailable", str(e)
+                ocr_mode = "off"
+            if ocr_status in ocr_dims.AUTO_APPLY and ow:
+                tw, th, size_src = ow, oh, "ocr"
+                stats["OCR补尺寸"] += 1
+                issues.append((name, f"尺寸 {round(w)}×{round(h)} → {round(ow)}×{round(oh)}（图 {ocr_status}）"
+                                     + ("  ⚠" + ocr_note if "复核" in ocr_note else "")))
+            elif ow:
+                issues.append((name, f"OCR 建议 {round(ow)}×{round(oh)} 未自动采用（{ocr_note}）"))
+            elif ocr_status and ocr_status not in ("ocr-empty", "ocr-unavailable"):
+                stats[ocr_status] += 1
 
         # ---- 几何 ----
         if placeholder:
@@ -634,7 +687,8 @@ def cmd_fix(args):
         rows.append({
             "block": name, "category": cat,
             "old": f"{round(w)}x{round(h)}", "new": f"{round(tw)}x{round(th)}",
-            "size_status": status_size,
+            "size_status": status_size, "size_src": size_src,
+            "ocr_status": ocr_status, "ocr_note": ocr_note,
             "brand": (rec.get("brand") or (br.dxf.text if br is not None else "")),
             "photo": "Y" if photos.get(sku_base(name)) else "N",
             "table": "Y" if rec.get("sku") else "N",
@@ -648,6 +702,9 @@ def cmd_fix(args):
         stats["删除待校对说明"] += len(review)
 
     print("\n分类统计:", dict(stats))
+    if ocr_cache and getattr(args, "ocr_cache", None):
+        json.dump(ocr_cache, open(args.ocr_cache, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print(f"OCR 缓存 → {args.ocr_cache}（{len(ocr_cache)} 条）")
     if issues:
         print("\n修正/异常:")
         for n, msg in issues[:40]:
@@ -721,8 +778,11 @@ def main(argv=None):
     f.add_argument("dxf")
     f.add_argument("--table", help="家具表格 xlsx")
     f.add_argument("--sheet", help="工作表名")
-    f.add_argument("--sku-dir", help="SKU 图片目录（只用于统计有无图）")
+    f.add_argument("--sku-dir", help="SKU 图片目录（统计有无图；--ocr 开启时用于读尺寸）")
     f.add_argument("--rules")
+    f.add_argument("--ocr", choices=["off", "auto", "all"], default="auto",
+                   help="表格没规格时用 OCR 从 SKU 图读尺寸：auto=只在缺规格/默认方块时读；all=全部读；off=关闭")
+    f.add_argument("--ocr-cache", help="OCR 结果缓存 json（复跑省时间）")
     f.add_argument("--chair-template", help="指定椅模板块名（默认自动挑选）")
     f.add_argument("--report", help="导出逐块清单 csv")
     f.add_argument("--max-items", type=int, help="只处理前 N 个（试跑）")

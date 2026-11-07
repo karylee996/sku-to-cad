@@ -11,10 +11,14 @@ ERP 导出的家具库常常长这样：从没画过的 SKU 只有 `长×宽` �
 而旁边已画好的家具是另一套规范（真几何、`FURNITURE` 层、SKU/品牌两行字）。
 这个工具把前者批量改造成后者，并把「核对不上」的东西显式列出来，而不是静默糊过去。
 
+**尺寸来源三级兜底**：表格 D 列 → SKU 图上的尺寸引线（Windows 自带 OCR，无需 Tesseract）→ 保留原值等人工。
+实测 7 个「表格里查不到」的 SKU，OCR 自动判定对 6 个，剩 1 个（套装椅）打 ⚠ 进复核清单。
+
 ## 安装
 
 ```bash
 pip install ezdxf openpyxl pillow
+pip install winsdk          # 可选：只用 Windows 自带的 OCR 读图上的尺寸
 git clone <this repo> && cd sku-to-cad
 ```
 
@@ -26,6 +30,13 @@ python scripts/sku_to_cad.py audit 家具库.dxf
 
 # 2) 预演：只出清单，不动文件
 python scripts/sku_to_cad.py fix 家具库.dxf --table 家具表格.xlsx --sku-dir SKU/ --report fix.csv
+
+# 2b) 表格缺规格时，用 OCR 从 SKU 图读尺寸（Windows 自带引擎）
+python scripts/sku_to_cad.py fix 家具库.dxf --table 家具表格.xlsx --sku-dir SKU/ \
+        --ocr auto --ocr-cache ocr_cache.json --report fix.csv
+
+# 2c) 只想看 OCR 读到了什么
+python scripts/ocr_dims.py --sku-dir SKU/ --skus TZ2614,TZ3818 --cur "TZ2614=1000x1000"
 
 # 3) 写回（会先自检，不通过不写）
 python scripts/sku_to_cad.py fix 家具库.dxf --table 家具表格.xlsx --apply
@@ -51,10 +62,11 @@ python scripts/dxf_render.py demo.dxf --region 9000,24000,-12000,0 --out demo.pn
 
 ```
 SKILL.md                 给 AI agent 用的完整作业指导（规则/流程/坑/验收）
-rules/house_style.json   规则外置：图层、字高、阈值、品类码、配方
+rules/house_style.json   规则外置：图层、字高、阈值、品类码、配方、OCR 参数
 scripts/sku_to_cad.py    audit / fix / index 三个命令
+scripts/ocr_dims.py      从 SKU 图读尺寸引线（Windows.Media.Ocr，双引擎）
 scripts/dxf_render.py    DXF → PNG，做视觉核对
-docs/LEARNED.md          规则怎么从真实图纸反推出来的（含实测数字）
+docs/LEARNED.md          规则怎么从真实图纸反推出来的（含实测数字与 OCR 准确率）
 ```
 
 ## 设计取向
@@ -75,6 +87,7 @@ docs/LEARNED.md          规则怎么从真实图纸反推出来的（含实测�
 | `thresholds.chair_limit_mm` | 椅子共模板的口径（本项目 650） |
 | `category_codes` | 品类码 → 几何家族 |
 | `brand_placeholders` | 哪些文字算「占位品牌」 |
+| `ocr` | 双引擎开关、默认方块值、容差 |
 
 ## License
 
