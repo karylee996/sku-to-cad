@@ -1,0 +1,93 @@
+{
+  "_comment": "家具平面图块的 house style。数值来自对真实展厅家具库(4000+ 图块)的反推，改这一份即可适配新项目。",
+
+  "layers": {
+    "insert": "FURNITURE",
+    "pending": "ERP_PENDING",
+    "number": "NUMBER",
+    "brand": "BRAND",
+    "legacy_number": "NEW_NUMBER",
+    "review": "ERP_REVIEW"
+  },
+
+  "block": {
+    "inner_layer": "0",
+    "inner_color": 0,
+    "inner_linetype": "ByBlock",
+    "center_tolerance": 1.0
+  },
+
+  "insert": {
+    "color": 7,
+    "scale": 1.0
+  },
+
+  "text": {
+    "style": "FURNITURE_TEXT",
+    "number_height": 100,
+    "brand_height": 100,
+    "number_dy": 70,
+    "brand_dy": -70,
+    "color_number": 2,
+    "color_brand": 7
+  },
+
+  "thresholds": {
+    "size_tolerance_mm": 20,
+    "chair_limit_mm": 650,
+    "text_search_radius": 1500,
+    "placeholder_line_count": 4
+  },
+
+  "brand_placeholders": ["待核对", "待校对", "待定"],
+
+  "category_codes": {
+    "BF": "sofa",
+    "PF": "sofa",
+    "TZ": "sofa",
+    "CU": "bed",
+    "CY": "chair",
+    "CJ": "table",
+    "CZ": "table",
+    "CG": "table",
+    "DG": "cabinet",
+    "SG": "cabinet",
+    "QG": "screen",
+    "SJ": "cabinet"
+  },
+
+  "recipes": {
+    "rect":   { "desc": "闭合矩形", "entities": 1, "when": "桌/几/柜/架/屏/凳 等无内部语义的单体" },
+    "circle": { "desc": "单个 CIRCLE", "entities": 1, "when": "圆桌/圆几/圆凳（名称含圆且接近正方）" },
+    "bed":    { "desc": "矩形 + 床尾带线 + 分缝 + 床头线", "entities": 4, "when": "床垫类，宽 ≥1000" },
+    "sofa":   { "desc": "圆角轮廓 + 靠背线 + 2 条扶手线 + 坐垫分格", "entities": "4~8", "when": "BF/PF/TZ 沙发" },
+    "lounge": { "desc": "圆角轮廓 + 靠背线 + 2 条扶手线", "entities": 4, "when": "CY 中 >650 的休闲椅" },
+    "chair":  { "desc": "复用统一椅模板（不缩放）", "entities": 19, "when": "CY 且 max(长,宽) ≤ 650" }
+  },
+
+  "sku_codec": {
+    "pattern": "^(?P<cat>[A-Z]{2})(?P<model>\\d{4})(?P<variant>(?:[A-Z])?Z\\d+[A-Z]?)$",
+    "note": "表内 SKU 带变体后缀（Z1/Z2/FZ3/GZ1…），图块名通常去掉后缀；个别历史块保留后缀（如 QG0089Z3），匹配时双向兼容。"
+  },
+
+  "table_columns": {
+    "sku": ["产品编号", "SKU", "编号"],
+    "name": ["物料名称", "名称", "品名"],
+    "spec": ["规格", "品牌名称"],
+    "note": "B 列产品图片常为 WPS 单元格图片 =DISPIMG(\"ID_xxx\",1)，值只是公式字符串，图片实体在 xl/media/，映射在 xl/cellimages.xml。"
+  },
+
+  "size_sources": [
+    "1. 家具表格 D 列 `长*宽*高cm`（×10 → mm，只取长×宽，高不用）",
+    "2. SKU 图片上的尺寸引线（OCR）：值 <10 视为米(×1000)，≥10 视为厘米(×10)",
+    "3. 现有图块包围盒（无资料时保留，不臆造）"
+  ],
+
+  "qa": [
+    "块内不得出现 TEXT / MTEXT / DIMENSION / HATCH",
+    "块内实体 layer=0 且 color=0(ByBlock)、linetype=ByBlock",
+    "块包围盒中心 = (0,0)，容差 1mm",
+    "每条 INSERT 配 1 个 NUMBER + 1 个 BRAND，dx=0、dy=-70",
+    "同一 SKU 在图面内只出现一次（特殊情况记入清单）"
+  ]
+}
